@@ -2,13 +2,10 @@
 #include "MPU6050_6Axis_MotionApps20.h"
 #include "Wire.h"
 #include <avr/wdt.h>
-#include <SoftwareSerial.h>
 
 #define g 9.80665f
 #define accelRange 16384.0
 #define gyroRange 65.5
-
-SoftwareSerial bluetooth(7, 8);  //rx-tx
 
 MPU6050 mpu;
 
@@ -31,15 +28,19 @@ float gyroX, gyroY, gyroZ;
 float accelX_off, accelY_off, accelZ_off;
 float gyroX_off, gyroY_off, gyroZ_off;
 
+char selection = '0';
+
 void setup() {
+  pinMode(7, OUTPUT);
+  
+  digitalWrite(7, HIGH);
+  delay(1000);
+  digitalWrite(7, LOW);
+    
   Wire.begin();
   //Wire.setClock(400000);
-  Serial.begin(115200);
-  Serial.println("Initializing I2C devices...");
   mpu.initialize();
   mpu.setFullScaleGyroRange(MPU6050_GYRO_FS_500);        //500dps, full range
-  Serial.println(mpu.testConnection() ? F("MPU6050 connection successful") : F("MPU6050 connection failed"));
-  Serial.println(F("Initializing DMP..."));
   devStatus = mpu.dmpInitialize();
 
   mpu.setXGyroOffset(220);
@@ -48,7 +49,6 @@ void setup() {
   mpu.setZAccelOffset(1788);
 
   if (devStatus) {
-    Serial.println("DMP Init Failed");
     while (1);
   }
   mpu.CalibrateAccel(100);
@@ -56,7 +56,6 @@ void setup() {
   mpu.PrintActiveOffsets();
   mpu.setDMPEnabled(true);
   packetSize = mpu.dmpGetFIFOPacketSize();     //packetsize is 42
-  Serial.println(packetSize);
 
   gyroX_off = mpu.getXGyroOffset();
   gyroY_off = mpu.getYGyroOffset();
@@ -65,15 +64,18 @@ void setup() {
   accelY_off = mpu.getYAccelOffset();
   accelZ_off = mpu.getZAccelOffset();
 
-  bluetooth.begin(9600);
   wdt_disable();
   delay(3000);        //to avoid infinite resetting
+  selection = 0;      //initial value
 }
 
 void loop() {
-  //getOrientation();
-  //getAccelReadings();
-  getGyroReadings();
+  switch(selection) {
+    case '0': getOrientation(); break;
+    case '1': getAccelReadings(); break;
+    case '2': getGyroReadings(); break;
+    case '3': sendString("97000"); break;
+  }
 }
 
 void getOrientation() {
@@ -99,7 +101,6 @@ void getOrientation() {
   y = ypr[0] * 180 / M_PI;
   p = ypr[1] * 180 / M_PI;
   r = ypr[2] * 180 / M_PI;
-  Serial.println(p);
   delay(100);
   wdt_reset();
 }
@@ -110,7 +111,6 @@ void getAccelReadings() {
   accelX = (ax - accelX_off) / accelRange * g;
   accelY = (ay - accelY_off) / accelRange * g;
   accelZ = (az - accelZ_off) / accelRange * g;
-  Serial.println(accelY);
   delay(100);
   wdt_reset();
 }
@@ -121,7 +121,36 @@ void getGyroReadings() {
   gyroX = (gx - gyroX_off) / gyroRange;
   gyroY = (gy - gyroY_off) / gyroRange;
   gyroZ = (gz - gyroZ_off) / gyroRange;
-  Serial.println(gyroZ);
   delay(100);
   wdt_reset();
+}
+
+void uartInit() {
+  //baud rate, 9600
+  UBRR0H = 0x00;
+  UBRR0L = 0x67;
+
+  UCSR0B |= (1 << 4) | (1 << 3); //receiver and transmitter enable
+  UCSR0C |= (1 << 2) | (1 << 1); //8-bit data size
+  UCSR0B |= (1 << RXCIE0);      //receiver interrupt enable
+  sei();               //global interrupt enable
+}
+
+void sendChar(char data) {
+  UDR0 = data;
+  while (!(UCSR0A & (1 << UDRE0)) ); //wait to send data
+}
+
+char receiveData() {
+  while (!(UCSR0A & (1 << 7)) ); //wait to receive data
+  char data = UDR0;
+  return data;
+}
+
+void sendString(char* data) {
+  while (*data != '\0') sendChar(*data++);
+}
+
+ISR(USART_RX_vect) {
+  selection = UDR0;
 }
