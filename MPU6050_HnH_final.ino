@@ -1,16 +1,19 @@
 #include "I2Cdev.h"
 #include "MPU6050_6Axis_MotionApps20.h"
 #include "Wire.h"
-#include <avr/wdt.h>
-#include <SoftwareSerial.h>
+#include "SFE_BMP180.h"
+#include "avr/wdt.h"
+#include "SoftwareSerial.h"
 
 #define g 9.80665f
 #define accelRange 16384.0
 #define gyroRange 65.5
+#define seaLevelPressure_hPa 1013.25
 
 SoftwareSerial bluetooth(7, 8);  //rx-tx
 
 MPU6050 mpu;
+SFE_BMP180 bmp180;
 
 uint16_t packetSize;
 uint16_t fifoCount;
@@ -30,6 +33,8 @@ float gyroX, gyroY, gyroZ;
 
 float accelX_off, accelY_off, accelZ_off;
 float gyroX_off, gyroY_off, gyroZ_off;
+
+double Temp, Pressure, alti;
 
 char selection;
 String str;
@@ -76,14 +81,14 @@ void setup() {
 }
 
 void loop() {
-  if( bluetooth.available() > 0) {
+  if ( bluetooth.available() > 0) {
     selection = bluetooth.read();
   }
-  switch(selection) {
+  switch (selection) {
     case '0': getOrientation(); break;
     case '1': getAccelReadings(); break;
     case '2': getGyroReadings(); break;
-    case '3': bluetooth.write("*9700"); delay(100); wdt_reset(); break;
+    case '3': getBmpReadings(); break;
   }
 }
 
@@ -96,7 +101,7 @@ void getOrientation() {
   else if (fifoCount % packetSize != 0) {
     return;
   }
-  wdt_enable(WDTO_8S);                 //watchDog timer for 4sec
+  wdt_enable(WDTO_8S);                 //watchDog timer for 8sec
   while (fifoCount < packetSize) fifoCount = mpu.getFIFOCount();    //wait for correct data length, very short duration
 
   while (fifoCount >= packetSize) {                    //to read latest packet
@@ -119,7 +124,7 @@ void getOrientation() {
 }
 
 void getAccelReadings() {
-  wdt_enable(WDTO_8S);               //watchDog timer for 4sec
+  wdt_enable(WDTO_8S);               //watchDog timer for 8sec
   mpu.getAcceleration(&ax, &ay, &az);
   accelX = (ax - accelX_off) / accelRange * g;
   accelY = (ay - accelY_off) / accelRange * g;
@@ -133,7 +138,7 @@ void getAccelReadings() {
 }
 
 void getGyroReadings() {
-  wdt_enable(WDTO_8S);               //watchDog timer for 4sec
+  wdt_enable(WDTO_8S);               //watchDog timer for 8sec
   mpu.getRotation(&gx, &gy, &gz);
   gyroX = (gx - gyroX_off) / gyroRange;
   gyroY = (gy - gyroY_off) / gyroRange;
@@ -143,5 +148,35 @@ void getGyroReadings() {
   str.toCharArray(data, 10);
   bluetooth.write(data);
   delay(100);
+  wdt_reset();
+}
+
+void getBmpReadings() {
+  if ( !bmp180.begin() ) {
+    Serial.println("BMP180 Problem");
+    return;
+  }
+  int flag = bmp180.startTemperature();
+  if (flag) {
+    delay(300);
+    wdt_enable(WDTO_8S);               //watchDog timer for 8sec
+    flag = bmp180.getTemperature(Temp);
+
+    if (flag) {
+      int delayN = bmp180.startPressure(2);
+
+      if (delayN > 0) {
+        delay(delayN);
+        flag = bmp180.getPressure(Pressure, Temp);
+        alti = bmp180.altitude(Pressure, seaLevelPressure_hPa);
+
+        if (flag) {
+          str = "*" + String(Pressure * 100);
+          str.toCharArray(data, 10);
+          bluetooth.write(data);
+        }
+      }
+    }
+  }
   wdt_reset();
 }
